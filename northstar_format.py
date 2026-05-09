@@ -127,7 +127,6 @@ def build_computer_use_tool(
                     "url": {"type": "string"},
                 },
                 "required": ["type"],
-                "additionalProperties": False,
             },
         },
     }
@@ -205,6 +204,15 @@ def _extract_xy(args: dict) -> Optional[tuple[int, int, str]]:
     if "x" in args and "y" in args:
         try:
             return int(round(float(args["x"]))), int(round(float(args["y"]))), action_type
+        except (TypeError, ValueError):
+            pass
+
+    # Northstar quirk: when prompted via inline system msg (not tools= param),
+    # model emits x as a [x, y] array instead of separate x/y fields.
+    if "x" in args and isinstance(args["x"], (list, tuple)) and len(args["x"]) >= 2:
+        try:
+            xs = [float(v) for v in args["x"]]
+            return int(round(xs[0])), int(round(xs[1])), action_type
         except (TypeError, ValueError):
             pass
 

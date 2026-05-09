@@ -64,17 +64,28 @@ from northstar_format import build_computer_use_tool  # noqa: E402
 MODEL_ID = "Tzafon/Northstar-CUA-Fast"
 
 
-def build_messages(instruction: str, image_path: str) -> list[dict[str, Any]]:
-    """Build the OpenAI-style messages list. Image first, then text."""
-    return [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image_url", "image_url": {"url": "file://" + image_path}},
-                {"type": "text", "text": instruction},
-            ],
-        }
-    ]
+def build_messages(instruction: str, image_path: str, tool_spec_dict=None) -> list[dict[str, Any]]:
+    """Build the OpenAI-style messages list. Image first, then text.
+    If tool_spec_dict is given, prepend it as a system message text (bypasses HF validator)."""
+    import json as _json
+    msgs = []
+    if tool_spec_dict is not None:
+        msgs.append({
+            "role": "system",
+            "content": (
+                "You are a computer-use agent. To take an action, respond with: "
+                "<tool_call>{\"name\": \"computer_use\", \"arguments\": {\"type\": \"click\", \"x\": <int 0-999>, \"y\": <int 0-999>}}</tool_call>. "
+                "Tool spec: " + _json.dumps(tool_spec_dict)
+            ),
+        })
+    msgs.append({
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": "file://" + image_path}},
+            {"type": "text", "text": instruction},
+        ],
+    })
+    return msgs
 
 
 def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
@@ -468,6 +479,7 @@ def main() -> None:
         },
         limit_mm_per_prompt={"image": 1},
         allowed_local_media_path="/",
+        enforce_eager=True,
     )
 
     sampling = SamplingParams(
@@ -523,7 +535,7 @@ def _run_legacy_raw(args, llm, sampling) -> None:
         conversations = []
         tool_lists = []
         for item in batch:
-            conversations.append(build_messages(item["instruction"], item["image_path"]))
+            conversations.append(build_messages(item["instruction"], item["image_path"], tool_spec_dict=build_computer_use_tool(int(item["image_width"]), int(item["image_height"]))["function"]))
             tool_lists.append([build_computer_use_tool(
                 int(item["image_width"]), int(item["image_height"]),
             )])
@@ -617,7 +629,7 @@ def _run_streaming_shard(args, llm, sampling) -> None:
         conversations = []
         tool_lists = []
         for item in batch:
-            conversations.append(build_messages(item["instruction"], item["image_path"]))
+            conversations.append(build_messages(item["instruction"], item["image_path"], tool_spec_dict=build_computer_use_tool(int(item["image_width"]), int(item["image_height"]))["function"]))
             tool_lists.append([build_computer_use_tool(
                 int(item["image_width"]), int(item["image_height"]),
             )])

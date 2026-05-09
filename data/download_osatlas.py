@@ -340,9 +340,14 @@ def print_image_download_instructions(sources: list[str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--n", type=int, default=5000, help="Number of items in the hard subset (default: 5000).")
-    p.add_argument("--output", type=Path, default=Path("data/osatlas_hard_5k.jsonl"),
-                   help="Output JSONL path (default: data/osatlas_hard_5k.jsonl).")
+    # Pool size bumped 5k -> 50k for the streaming RSSD daemon: the sampler
+    # runs continuously across multiple shards and consumes the pool linearly,
+    # so a bigger pool = more headroom for an overnight run without re-feeding.
+    # The collect() pass is still streaming (iter_filtered_elements is a
+    # generator), so a 50k JSONL doesn't materialize the whole upstream JSON.
+    p.add_argument("--n", type=int, default=50000, help="Number of items in the hard subset (default: 50000).")
+    p.add_argument("--output", type=Path, default=Path("data/osatlas_hard_50k.jsonl"),
+                   help="Output JSONL path (default: data/osatlas_hard_50k.jsonl).")
     p.add_argument("--seed", type=int, default=0, help="Random seed for sampling (default: 0).")
     p.add_argument("--sources", type=str, default=DEFAULT_SOURCES,
                    help=f"Comma-separated source ids (default: {DEFAULT_SOURCES}). "

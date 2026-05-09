@@ -2,19 +2,85 @@
 
 Sample N completions per item from **Northstar-CUA-Fast**, filter by
 ground-truth bbox, emit SFT-ready JSONL. Lane B (training) consumes
-`sft_data.jsonl`.
+`sft.jsonl` (streaming) or `sft_data.jsonl` (legacy).
 
-## Pipeline
+Two modes:
+
+* **Streaming shard mode** (default for the daemon): one worker per GPU,
+  hash-mod input distribution, eager filter, per-item synchronous flush.
+  Used by `sample/launch_shards.sh` + monitored via `sample/status.py`.
+* **Legacy raw mode**: single GPU, all 8 raw completions written to
+  `raw_samples.jsonl`, then `filter_by_bbox.py` produces `sft_data.jsonl`.
+  Kept for back-compat / one-off runs.
+
+## Streaming shard mode (recommended)
 
 ```bash
-# 1. Sample (GPU required: 1x H100 80GB, ~30 min)
+# 1. Build a 50k pool (one-shot, fast — only annotation JSONs are pulled).
+python data/download_osatlas.py            # default: --n 50000
+
+# 2. Launch one shard per GPU. Daemon-style: nohup + & per shard.
+sample/launch_shards.sh \
+    --num-shards 4 --gpus 0,1,2,3 \
+    --input data/osatlas_hard_50k.jsonl \
+    --samples-root samples
+
+# 3. Watch progress (one-shot or --watch 5 for refresh).
+python sample/status.py --samples-root samples
+python sample/status.py --watch 5
+
+# 4. Kill a shard or all of them.
+sample/kill_shard.sh 0
+sample/kill_shard.sh all
+```
+
+### Per-shard on-disk layout
+
+```
+samples/shard_0/
+  sft.jsonl       # winning completions only (one per item that hit at least once)
+  done_ids.txt    # one item_id per line, append-only
+  zero_hits.txt   # item_ids that got 0/8 hits — permanently skipped on resume
+  status.json     # {pid, gpu_id, started_at, last_write_at, items_done, sft_items, ...}
+  pid             # for sample/kill_shard.sh
+  log.txt         # stdout/stderr from the worker
+samples/shard_1/...
+```
+
+Per-item write order (single-writer, crash-safe):
+
+1. Append SFT row to `sft.jsonl`, `flush + fsync`.
+2. Append item_id to `done_ids.txt`, `flush + fsync`.
+3. Update `status.json` (atomic tmp + rename).
+
+Crash between (1) and (2) → the SFT row is on disk but `done_ids.txt` doesn't
+reference it. On resume the item is re-processed; the trainer dedupes by
+`item_id`. Crash after (2) → invisible to consumers.
+
+### Resume
+
+`StreamingWriter.load_skip_set()` reads `done_ids.txt ∪ zero_hits.txt` at
+launch and filters the input stream. `--no-resume` ignores prior state (rare —
+useful only for debugging a stuck shard). Hash-mod and resume compose: the
+shard's input is `{lines where idx % N == shard_id} \ skip`.
+
+### Work distribution
+
+Hash-mod: shard X processes input lines where `line_index % num_shards == X`.
+No coordinator, no claims, no IPC. Two shards reading the same input file
+cannot pick the same item.
+
+## Legacy raw mode (single GPU)
+
+```bash
+# Sample (GPU required: 1x H100 80GB)
 python sample/sample_northstar.py \
     --input  data/osatlas_hard_5k.jsonl \
     --output sample/raw_samples.jsonl \
     --n 8 --temperature 0.7 --top-p 0.9 \
     --max-tokens 512 --batch-size 64
 
-# 2. Filter (CPU only, ~30 sec, idempotent)
+# Filter (CPU only, ~30 sec, idempotent)
 python sample/filter_by_bbox.py \
     --input  sample/raw_samples.jsonl \
     --output sample/sft_data.jsonl \
@@ -24,6 +90,36 @@ python sample/filter_by_bbox.py \
 `--keep first` (default) writes one record per item — first sample whose click
 lands in the gt bbox. Prevents any single screenshot from dominating SFT.
 Use `--keep all` if Lane B wants diversity-aware training.
+
+## Status dashboard format
+
+```
+shards: 4/4 alive (last write 8s ago)
+items_done: 9234 (rate: 7.2/sec, +432/min)
+sft_items: 6012 (yield: 65.1%)
+elapsed: 22min
+projected at T+45min: ~18000 items, ~11700 SFT
+GPUs: gpu0=84% gpu1=81% gpu2=88% gpu3=82%
+--------------------------------------------------------------
+shard_0: 2308 done, 1521 sft (last write 7s ago)  alive
+shard_1: 2295 done, 1487 sft (last write 12s ago) alive
+shard_2: 2316 done, 1502 sft (last write 5s ago)  alive
+shard_3: 2315 done, 1502 sft (last write 9s ago)  alive
+```
+
+If a shard's `last_write_at` is older than 60s, its row is marked **STALE**
+(red on a TTY). The aggregate `alive` count drops accordingly.
+
+## Tests
+
+```bash
+pytest tests/test_shard_filter.py tests/test_streaming_writer.py \
+       tests/test_resume.py tests/test_launch_shards.py \
+       tests/test_status.py tests/test_download_pool.py
+```
+
+All tests run on CPU. vLLM is imported lazily inside `main()` so the script
+loads on a Mac for testing/help.
 
 ## Confirmed Northstar format (sources)
 

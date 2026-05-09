@@ -51,6 +51,11 @@ from northstar_format import (  # noqa: E402
 )
 
 DEFAULT_DATA = Path(__file__).resolve().parent / "data" / "screenspot_pro"
+DEFAULT_SUBSET_PATH = (
+    Path(__file__).resolve().parent / "data" / "screenspot_pro_subset_200.jsonl"
+)
+SUBSET_SEED = 42
+SUBSET_STRATIFY_KEY = "group"
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +75,32 @@ def load_items(data_dir: Path, limit: int | None = None) -> list[dict]:
             if limit is not None and len(items) >= limit:
                 break
     return items
+
+
+def select_subset_items(
+    items: list[dict],
+    n: int,
+    subset_path: Path = DEFAULT_SUBSET_PATH,
+    seed: int = SUBSET_SEED,
+    stratify_key: str = SUBSET_STRATIFY_KEY,
+) -> list[dict]:
+    """Pick a stratified ``n``-item slice of ``items``.
+
+    First call writes ``subset_path``; later calls (across processes / runs)
+    read from disk. This is what guarantees every training run scores the
+    SAME subset, so deltas are meaningful.
+
+    Implementation lives in ``eval/stratified_subset.py`` — kept separate so
+    the orchestrator can import it without dragging in vLLM.
+    """
+    from stratified_subset import make_subset  # local import to avoid cycles
+    return make_subset(
+        items,
+        n=n,
+        stratify_key=stratify_key,
+        seed=seed,
+        persist_to=Path(subset_path),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +296,29 @@ def evaluate(items: list[dict], backend, data_dir: Path, batch_size: int,
     return results
 
 
+def build_payload(
+    model: str,
+    lora: str | None,
+    results: list[dict],
+    elapsed: float,
+    subset_size: int | None = None,
+) -> dict:
+    """Assemble the JSON payload that the eval CLI writes to disk.
+
+    Pulled out of ``main()`` so the orchestrator (and tests) can build the
+    same shape without standing up a vLLM backend.
+    """
+    return {
+        "model": model,
+        "lora": lora,
+        "n_items": len(results),
+        "elapsed_sec": elapsed,
+        "subset_size": subset_size,
+        "metrics": aggregate(results),
+        "predictions": results,
+    }
+
+
 def aggregate(results: list[dict]) -> dict:
     n = len(results)
     n_correct = sum(1 for r in results if r["correct"])
@@ -316,6 +370,15 @@ def main() -> None:
                    help="Output JSON path (per-item preds + aggregated metrics)")
     p.add_argument("--limit", type=int, default=None,
                    help="Limit to first N items (for debugging / sanity check)")
+    p.add_argument("--subset", type=int, default=None,
+                   help="Use the persisted stratified N-item subset (default: 200) "
+                        "instead of the full eval. The subset is written to "
+                        "eval/data/screenspot_pro_subset_<N>.jsonl on first use "
+                        "and reloaded thereafter — guarantees every run scores "
+                        "the same items.")
+    p.add_argument("--subset-path", type=Path, default=None,
+                   help="Override the default subset persistence path. Defaults to "
+                        "eval/data/screenspot_pro_subset_<N>.jsonl.")
     p.add_argument("--backend", choices=["vllm", "transformers"], default="vllm")
     p.add_argument("--batch-size", type=int, default=16,
                    help="Batch size for vLLM. Ignored by transformers backend.")
@@ -332,6 +395,17 @@ def main() -> None:
     items = load_items(args.data, limit=args.limit)
     print(f"  {len(items)} items "
           f"({'sanity check' if args.limit else 'full eval'})")
+
+    subset_size: int | None = None
+    if args.subset is not None:
+        subset_size = args.subset
+        subset_path = args.subset_path or (
+            Path(__file__).resolve().parent / "data"
+            / f"screenspot_pro_subset_{args.subset}.jsonl"
+        )
+        items = select_subset_items(items, n=args.subset, subset_path=subset_path)
+        print(f"  -> stratified subset of {len(items)} items "
+              f"(persisted at {subset_path})")
 
     print(f"Loading {args.backend} backend: model={args.model} lora={args.lora}")
     if args.backend == "vllm":
@@ -364,14 +438,13 @@ def main() -> None:
         print(f"  {k:20s} acc={v['acc']:.4f}  n={v['n']}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "model": args.model,
-        "lora": args.lora,
-        "n_items": len(results),
-        "elapsed_sec": elapsed,
-        "metrics": metrics,
-        "predictions": results,
-    }
+    payload = build_payload(
+        model=args.model,
+        lora=args.lora,
+        results=results,
+        elapsed=elapsed,
+        subset_size=subset_size,
+    )
     with args.output.open("w") as f:
         json.dump(payload, f, indent=2)
     print(f"\nWrote {args.output}")

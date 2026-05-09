@@ -22,8 +22,23 @@ torch>=2.4
 pillow>=10
 tqdm>=4.66
 
+# --- train/ deps (LoRA SFT loop) ---
+# transformers / peft / accelerate / torch already pinned above for eval.
+# trl drives the SFTTrainer loop with prompt-token loss masking;
+# datasets wraps the snapshot JSONL as an in-memory Dataset.
+trl>=0.12
+datasets>=3.0
+
 # --- sample/ deps (rejection-sampling pipeline) ---
 # vllm>=0.7.0 already pinned above (need >=0.6.3 for tool-call chat template
 # support; >=0.7.0 picks up Qwen3-VL multimodal fixes and prefix caching with
 # images). filter_by_bbox.py is stdlib-only (re, json, argparse) — no extra
 # deps. sample_northstar.py uses vllm + nvidia-smi (binary, not pip).
+# Streaming-shard mode (StreamingWriter, launch_shards.sh, status.py) is
+# stdlib-only — no extra runtime deps.
+
+# --- test deps (pytest suite under tests/) ---
+# All tests run on a CPU-only laptop without vLLM, GPUs, or network.
+# vLLM imports are deferred inside main(); writers/parsers/dashboards are
+# pure-Python and unit-tested directly.
+pytest>=8.0

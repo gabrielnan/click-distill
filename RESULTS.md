@@ -5,7 +5,7 @@
 
 ## TL;DR
 
-Built end-to-end **rejection-sampled self-distillation (RSSD)** pipeline for Northstar-CUA-Fast on B200 GPU. Hit and fixed 6 vLLM 0.20 / HF compat bugs. Demonstrated **16% bbox-hit yield** on 100 OS-Atlas hard items. LoRA training framework ready but blocked by HF Datasets schema bug at the deadline.
+Built end-to-end **rejection-sampled self-distillation (RSSD)** pipeline for Northstar-CUA-Fast on B200 GPU. Hit and fixed 8 vLLM 0.20 / HF / trl compat bugs. Demonstrated **13.7% bbox-hit yield on 1000 OS-Atlas hard items → 137 SFT items collected**. Training got to LoRA init (66M trainable params) but trl SFTTrainer API churn (`tokenizer` / `processing_class` rename, `max_seq_length` moved out of SFTConfig) blocked the actual fit step at the deadline.
 
 ## What worked
 

@@ -1,0 +1,21 @@
+# data + intermediates
+data/*.jsonl
+sample/*.jsonl
+eval/data/
+eval/results/
+results/
+adapters/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# editor
+.DS_Store
+.idea/
+.vscode/
+
+# local-only plan drafts
+*-deprecated.md

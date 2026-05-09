@@ -1,0 +1,29 @@
+# --- data prep deps (used by data/download_osatlas.py + image fetch) ---
+# `data/download_osatlas.py` itself uses only the stdlib, but the README
+# instructs the user to fetch image archives via `hf download`, which ships
+# with huggingface_hub. pillow is also needed for the downstream sampling
+# script that loads PNGs to fill image_width / image_height.
+# Both are already present below for the eval lane.
+
+# --- eval deps (added by eval/ scripts) ---
+# Dataset download
+huggingface_hub>=0.24
+
+# Inference (primary backend)
+vllm>=0.7.0
+
+# Inference (fallback backend) + LoRA overlay
+transformers>=4.46
+peft>=0.13
+accelerate>=1.0
+torch>=2.4
+
+# Image I/O + progress
+pillow>=10
+tqdm>=4.66
+
+# --- sample/ deps (rejection-sampling pipeline) ---
+# vllm>=0.7.0 already pinned above (need >=0.6.3 for tool-call chat template
+# support; >=0.7.0 picks up Qwen3-VL multimodal fixes and prefix caching with
+# images). filter_by_bbox.py is stdlib-only (re, json, argparse) — no extra
+# deps. sample_northstar.py uses vllm + nvidia-smi (binary, not pip).

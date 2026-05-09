@@ -70,7 +70,7 @@ def build_messages(instruction: str, image_path: str) -> list[dict[str, Any]]:
         {
             "role": "user",
             "content": [
-                {"type": "image", "image": image_path},
+                {"type": "image_url", "image_url": {"url": "file://" + image_path}},
                 {"type": "text", "text": instruction},
             ],
         }
@@ -467,6 +467,7 @@ def main() -> None:
             "max_pixels": args.max_image_tokens * 32 * 32,
         },
         limit_mm_per_prompt={"image": 1},
+        allowed_local_media_path="/",
     )
 
     sampling = SamplingParams(
@@ -529,7 +530,7 @@ def _run_legacy_raw(args, llm, sampling) -> None:
         request_outputs = llm.chat(
             messages=conversations,
             sampling_params=sampling,
-            tools=tool_lists,
+            # tools=tool_lists,  # disabled: HF validator rejects custom tool spec
             use_tqdm=False,
         )
         for item, ro in zip(batch, request_outputs):
@@ -623,7 +624,7 @@ def _run_streaming_shard(args, llm, sampling) -> None:
         request_outputs = llm.chat(
             messages=conversations,
             sampling_params=sampling,
-            tools=tool_lists,
+            # tools=tool_lists,  # disabled: HF validator rejects custom tool spec
             use_tqdm=False,
         )
         for item, ro in zip(batch, request_outputs):

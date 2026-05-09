@@ -129,11 +129,6 @@ def build_computer_use_tool(
                 "required": ["type"],
                 "additionalProperties": False,
             },
-            # Non-standard hint fields the chat template will JSON-dump verbatim
-            # into the tool block, so the model sees the screenshot dims and env.
-            "display_width": display_width,
-            "display_height": display_height,
-            "environment": environment,
         },
     }
 
